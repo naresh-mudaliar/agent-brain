@@ -1,0 +1,51 @@
+# Set default behavior to automatically normalize text line endings to LF on commit
+* text=auto eol=lf
+
+# Python & build configuration
+*.py text eol=lf
+*.toml text eol=lf
+*.txt text eol=lf
+*.cfg text eol=lf
+*.ini text eol=lf
+
+# Documentation
+*.md text eol=lf
+*.rst text eol=lf
+LICENSE text eol=lf
+
+# CI & GitHub configuration
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+
+# Multi-language source files supported by AST parser
+*.rs text eol=lf
+*.go text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.js text eol=lf
+*.jsx text eol=lf
+*.scala text eol=lf
+*.sql text eol=lf
+
+# Windows-specific scripts
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Shell scripts (must always use LF to prevent bash errors on Linux/macOS)
+*.sh text eol=lf
+
+# Binary files - never modify line endings
+*.enc binary
+*.db binary
+*.sqlite binary
+*.sqlite3 binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.zip binary
+*.tar.gz binary
+*.whl binary

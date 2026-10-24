@@ -1,0 +1,13 @@
+kuzu>=0.8.0
+mcp>=1.2.0
+cryptography>=41.0.0
+click>=8.0.0
+tiktoken>=0.7.0
+tree-sitter>=0.22.0
+tree-sitter-python>=0.22.0
+tree-sitter-javascript>=0.22.0
+tree-sitter-typescript>=0.22.0
+tree-sitter-rust>=0.22.0
+tree-sitter-go>=0.22.0
+tree-sitter-scala>=0.22.0
+tree-sitter-sql>=0.22.0

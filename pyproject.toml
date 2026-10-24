@@ -1,0 +1,62 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-brain"
+version = "0.1.0"
+description = "Plug-and-pack agent memory tool backed by embedded Kùzu graph database."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+keywords = ["mcp", "graph-database", "kuzu", "ast", "tree-sitter", "ai-agents", "rag", "code-analysis"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "kuzu>=0.8.0",
+    "mcp>=1.2.0",
+    "cryptography>=41.0.0",
+    "click>=8.0.0",
+    "tiktoken>=0.7.0",
+    "tree-sitter>=0.22.0",
+    "tree-sitter-python>=0.22.0",
+    "tree-sitter-javascript>=0.22.0",
+    "tree-sitter-typescript>=0.22.0",
+    "tree-sitter-rust>=0.22.0",
+    "tree-sitter-go>=0.22.0",
+    "tree-sitter-scala>=0.22.0",
+    "tree-sitter-sql>=0.22.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/agent-brain/agent-brain"
+Repository = "https://github.com/agent-brain/agent-brain.git"
+Issues = "https://github.com/agent-brain/agent-brain/issues"
+
+[project.scripts]
+agent-brain = "cli:cli"
+agent-memory = "cli:cli"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+]
+s3 = [
+    "boto3>=1.28.0",
+]
+
+[tool.setuptools]
+py-modules = ["cli", "benchmark"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["core*", "extractors*", "tools*", "sync*"]
