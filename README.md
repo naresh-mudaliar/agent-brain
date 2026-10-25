@@ -17,7 +17,8 @@
   * `search_code_graph(symbol_name)`: Immediate callers/callees and symbol definition metadata.
   * `get_dependency_impact(function_name)`: Multi-hop graph traversal (`[:CALLS*1..5]`) to evaluate blast radius and downstream dependents.
 * **Encrypted Synchronization & Hydration**: Compresses memory into in-memory zip streams and encrypts with AES (Fernet) to produce `memory-seed.enc`. Decrypts and auto-hydrates on startup with Zip Slip protection.
-* **Unified CLI**: Single command-line interface (`agent-brain`, alias `agent-memory`) with commands for indexing (`--workers`), exporting, pulling, registering with AI agents, benchmarking, and running the MCP agent server.
+* **Low-Memory Incremental Outbox Watcher**: Monitors file modifications using `watchdog` with a debounced in-memory outbox queue. Atomically reconciles batch file updates into KùzuDB in ~20-50ms with a capped memory buffer pool (128 MB), eliminating full-codebase rescanning.
+* **Unified CLI**: Single command-line interface (`agent-brain`, alias `agent-memory`) with commands for indexing (`--workers`), watching (`watch`), exporting, pulling, registering with AI agents, benchmarking, and running the MCP agent server.
 
 ---
 
@@ -170,7 +171,28 @@ agent-brain mcp --client antigravity
 
 ---
 
-### Step 4: Export & Encrypt Memory Archive
+### Step 4: Run Real-Time Incremental Watcher (Outbox Pattern)
+
+Automatically keep your codebase graph synchronized in real-time as you or your AI agent write and edit code:
+
+```bash
+# Start background outbox watcher on current codebase:
+agent-brain watch
+
+# Or watch a specific directory with custom debounce:
+agent-brain watch --path ./my-project --debounce 1.5
+
+# Or start the MCP server with auto-watching enabled:
+agent-brain mcp --watch
+```
+
+* **Outbox Debounce Pattern**: Rapid file edits are collapsed into an in-memory queue and reconciled in atomic micro-batches (~20–50 ms).
+* **Zero Ghost Nodes**: When a function is renamed or deleted, its old nodes are cleanly purged with `DETACH DELETE` before inserting the updated AST.
+* **Low Memory Footprint**: Strictly limits KùzuDB's buffer pool to 128 MB (customizable via `AGENT_MEMORY_BUFFER_POOL_MB`), ensuring minimal resource usage across multiple simultaneous projects.
+
+---
+
+### Step 5: Export & Encrypt Memory Archive
 
 Compress and encrypt `./.agent-memory/` into `memory-seed.enc`:
 
@@ -197,7 +219,7 @@ agent-brain export
 
 ---
 
-### Step 5: Pull & Decrypt on Another Machine
+### Step 6: Pull & Decrypt on Another Machine
 
 Restore and hydrate the database from the encrypted seed:
 
@@ -269,13 +291,14 @@ agent-brain benchmark --path "C:/path/to/custom/codebase" --symbol "my_function"
 
 ## 🧪 Test Suite
 
-The project includes an automated test suite with **50 passing unit tests** executing in **~1.5 seconds** with 100% test isolation:
+The project includes an automated test suite with **59 passing unit tests** executing in **~3 seconds** with 100% test isolation:
 
 ```bash
 python -m unittest discover tests
 ```
 
 **Test Coverage Summary:**
+* [`tests/test_watcher.py`]: Outbox debounce queue, path exclusion filtering, atomic batch reconciliation, `DETACH DELETE` invalidation, and end-to-end watcher callbacks.
 * [`tests/test_ast_parser.py`]: Tree-sitter AST extraction across 7 languages, Python AST visitor, scope qualification, call graph resolution, and syntax error recovery.
 * [`tests/test_database.py`]: Kùzu initialization, strongly-typed schema DDL, in-memory execution, multi-threaded concurrency lock, query error handling, and clean teardown.
 * [`tests/test_mcp_server.py`]: MCP server registration, caller/callee lookup via `search_code_graph`, and multi-hop impact analysis via `get_dependency_impact`.
@@ -283,7 +306,7 @@ python -m unittest discover tests
 * [`tests/test_benchmark.py`]: Indexing throughput, 3-tier comparative benchmarking (Raw-file vs Semantic chunk vs Graph), and deduplication metrics.
 * [`tests/test_antigravity_token_tracker.py`]: Ground-truth token tracking across Antigravity IDE and Desktop environments, tool telemetry, and cache hit metrics.
 * [`tests/test_s3_sync.py`]: In-memory streaming zip, Fernet AES roundtrip encryption, Zip Slip path traversal guard, and startup hydration.
-* [`tests/test_cli.py`]: Click CLI commands (`init`, `register`, `export`, `pull`, `benchmark`, `mcp`, `generate-key`).
+* [`tests/test_cli.py`]: Click CLI commands (`init`, `register`, `watch`, `export`, `pull`, `benchmark`, `mcp`, `generate-key`).
 
 ---
 
@@ -302,7 +325,7 @@ python -m unittest discover tests
 
 ```text
 agent-brain/
-├── cli.py                     # Unified Click CLI (init, register, benchmark, export, pull, mcp)
+├── cli.py                     # Unified Click CLI (init, register, watch, benchmark, export, pull, mcp)
 ├── benchmark.py               # Token efficiency & indexing performance benchmark
 ├── core/
 │   ├── __init__.py
@@ -316,12 +339,14 @@ agent-brain/
 │   └── mcp_server.py          # Official MCP SDK server (search_code_graph, get_dependency_impact)
 ├── sync/
 │   ├── __init__.py
+│   ├── watcher.py             # Low-memory outbox file watcher & batch reconciler
 │   └── s3_sync.py             # AES Fernet encryption, in-memory zip, startup hydration
 ├── tests/
 │   ├── test_cli.py
 │   ├── test_database.py
 │   ├── test_ast_parser.py
 │   ├── test_mcp_server.py
+│   ├── test_watcher.py
 │   ├── test_s3_sync.py
 │   ├── test_integrations.py
 │   └── test_benchmark.py

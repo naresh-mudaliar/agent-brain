@@ -78,13 +78,17 @@ def get_agent_config_path(client: str, workspace_dir: Optional[str] = None) -> O
     return None
 
 
-def build_mcp_server_config(db_path: Optional[str] = None) -> Dict[str, Any]:
+def build_mcp_server_config(
+    db_path: Optional[str] = None, enable_watch: bool = False
+) -> Dict[str, Any]:
     """Generate the MCP server configuration block for agent-brain.
 
     Args:
         db_path: Optional path to the .agent-memory/brain.db database.
             If None, enables dynamic workspace discovery so the server resolves
             ./.agent-memory/brain.db relative to whichever project workspace is currently active.
+        enable_watch: If True, configures the MCP server to automatically start
+            the background outbox file watcher on launch.
 
     Returns:
         Dictionary conforming to the standard Stdio MCP server schema.
@@ -94,25 +98,34 @@ def build_mcp_server_config(db_path: Optional[str] = None) -> Dict[str, Any]:
     if brain_exec:
         command = brain_exec
         args = ["mcp"]
+        if enable_watch:
+            args.append("--watch")
     else:
         # Fall back to current python executable
         python_exec = sys.executable.replace("\\", "/")
         command = python_exec
         args = ["-m", "tools.mcp_server"]
+        if enable_watch:
+            args.append("--watch")
 
     cfg: Dict[str, Any] = {
         "command": command,
         "args": args,
     }
 
+    env_vars: Dict[str, str] = {}
+    if enable_watch:
+        env_vars["AGENT_MEMORY_WATCH"] = "1"
+
     # Only set explicit AGENT_MEMORY_DB_PATH environment variable if explicitly specified.
     # When omitted, dynamic workspace discovery resolves ./.agent-memory/brain.db in the active workspace.
     if db_path is not None:
         resolved_db = Path(db_path).resolve()
         db_path_str = str(resolved_db).replace("\\", "/")
-        cfg["env"] = {
-            "AGENT_MEMORY_DB_PATH": db_path_str,
-        }
+        env_vars["AGENT_MEMORY_DB_PATH"] = db_path_str
+
+    if env_vars:
+        cfg["env"] = env_vars
 
     return cfg
 
@@ -122,6 +135,7 @@ def register_client_mcp(
     db_path: Optional[str] = None,
     config_path_override: Optional[Path] = None,
     workspace_dir: Optional[str] = None,
+    enable_watch: bool = False,
 ) -> Tuple[bool, str]:
     """Register or update agent-brain in the given AI agent's MCP config.
 
@@ -130,6 +144,7 @@ def register_client_mcp(
         db_path: Path to the .agent-memory/brain.db database.
         config_path_override: Optional explicit path for testing.
         workspace_dir: Optional workspace directory for workspace-scoped configs.
+        enable_watch: Automatically run background outbox watcher when agent connects.
 
     Returns:
         Tuple of (success: bool, message: str).
@@ -160,7 +175,7 @@ def register_client_mcp(
             data["mcpServers"] = {}
 
         # Build server config and insert
-        server_cfg = build_mcp_server_config(db_path)
+        server_cfg = build_mcp_server_config(db_path, enable_watch=enable_watch)
         data["mcpServers"][SERVER_NAME] = server_cfg
 
         # Write back indented JSON
@@ -182,6 +197,7 @@ def register_client_mcp(
 def register_all_clients(
     db_path: Optional[str] = None,
     workspace_dir: Optional[str] = None,
+    enable_watch: bool = False,
 ) -> List[Tuple[str, bool, str]]:
     """Register MCP server with all supported agent clients.
 
@@ -191,7 +207,9 @@ def register_all_clients(
     clients = ["antigravity", "claude", "cursor"]
     results = []
     for c in clients:
-        success, msg = register_client_mcp(c, db_path=db_path, workspace_dir=workspace_dir)
+        success, msg = register_client_mcp(
+            c, db_path=db_path, workspace_dir=workspace_dir, enable_watch=enable_watch
+        )
         results.append((c, success, msg))
     return results
 

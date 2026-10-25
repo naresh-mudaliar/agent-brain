@@ -8,6 +8,7 @@ Commands:
   agent-brain benchmark         : Runs token efficiency & indexing performance benchmark.
   agent-brain track             : Tracks Antigravity IDE agent token usage and benchmark metrics.
   agent-brain mcp               : Starts the MCP stdio server for local AI agents.
+  agent-brain watch             : Runs background outbox file watcher for real-time incremental graph sync.
   agent-brain generate-key      : Generates a new Fernet AES encryption key.
 """
 
@@ -56,7 +57,7 @@ from sync.s3_sync import (
 
 
 @click.group(name="agent-brain")
-@click.version_option(version="0.1.0", prog_name="agent-brain")
+@click.version_option(version="0.2.0", prog_name="agent-brain")
 def cli() -> None:
     """agent-brain: Plug-and-pack graph memory for AI agents backed by KùzuDB."""
     pass
@@ -95,12 +96,19 @@ def cli() -> None:
     default=None,
     help="Auto-connect indexed memory to an AI agent client upon completion.",
 )
+@click.option(
+    "--watch/--no-watch",
+    default=True,
+    show_default=True,
+    help="Enable automatic background file watching whenever the connected AI agent runs.",
+)
 def init_cmd(
     path: str,
     db_path: Optional[str],
     graph_name: str,
     workers: Optional[int] = None,
     connect: Optional[str] = None,
+    watch: bool = True,
 ) -> None:
     """Scan the codebase directory using multi-language parallel AST parsers and populate Kùzu."""
     target_dir = Path(path).resolve()
@@ -163,13 +171,17 @@ def init_cmd(
             # Use dynamic discovery if db_path was not explicitly customized
             reg_db = db_path
             if connect.lower() == "all":
-                results = register_all_clients(db_path=reg_db, workspace_dir=str(target_dir))
+                results = register_all_clients(
+                    db_path=reg_db, workspace_dir=str(target_dir), enable_watch=watch
+                )
                 for client_name, ok, msg in results:
                     prefix = "✓" if ok else "✗"
                     color = "green" if ok else "red"
                     click.secho(f"  {prefix} [{client_name.upper()}] {msg}", fg=color)
             else:
-                ok, msg = register_client_mcp(connect, db_path=reg_db, workspace_dir=str(target_dir))
+                ok, msg = register_client_mcp(
+                    connect, db_path=reg_db, workspace_dir=str(target_dir), enable_watch=watch
+                )
                 prefix = "✓" if ok else "✗"
                 color = "green" if ok else "red"
                 click.secho(f"  {prefix} [{connect.upper()}] {msg}", fg=color)
@@ -308,21 +320,30 @@ def pull_cmd(archive: str, target: str, key: Optional[str]) -> None:
     default=None,
     help="Explicit path to embedded database file (default: dynamic workspace discovery across projects).",
 )
-def register_cmd(client: str, db_path: Optional[str] = None) -> None:
+@click.option(
+    "--watch/--no-watch",
+    default=True,
+    show_default=True,
+    help="Enable automatic background file watching whenever the AI agent connects.",
+)
+def register_cmd(
+    client: str, db_path: Optional[str] = None, watch: bool = True
+) -> None:
     """Auto-detect and register MCP server with installed AI agents (Antigravity, Claude, Cursor)."""
+    watch_msg = " (auto-watch enabled)" if watch else ""
     click.secho(
-        f"\n[REGISTER] Registering agent-brain MCP server with '{client}'...",
+        f"\n[REGISTER] Registering agent-brain MCP server with '{client}'{watch_msg}...",
         fg="cyan",
         bold=True,
     )
     if client.lower() == "all":
-        results = register_all_clients(db_path=db_path)
+        results = register_all_clients(db_path=db_path, enable_watch=watch)
         for c_name, ok, msg in results:
             prefix = "✓" if ok else "✗"
             color = "green" if ok else "red"
             click.secho(f"  {prefix} [{c_name.upper()}] {msg}", fg=color)
     else:
-        ok, msg = register_client_mcp(client, db_path=db_path)
+        ok, msg = register_client_mcp(client, db_path=db_path, enable_watch=watch)
         prefix = "✓" if ok else "✗"
         color = "green" if ok else "red"
         click.secho(f"  {prefix} [{client.upper()}] {msg}", fg=color)
@@ -345,7 +366,17 @@ def register_cmd(client: str, db_path: Optional[str] = None) -> None:
     show_default=True,
     help="Path to embedded database file.",
 )
-def mcp_cmd(client: Optional[str] = None, db_path: str = DEFAULT_DB_PATH) -> None:
+@click.option(
+    "--watch",
+    is_flag=True,
+    default=False,
+    help="Enable background outbox file watcher for real-time incremental code indexing.",
+)
+def mcp_cmd(
+    client: Optional[str] = None,
+    db_path: str = DEFAULT_DB_PATH,
+    watch: bool = False,
+) -> None:
     """Launch the Model Context Protocol (MCP) server over stdio for local AI agents."""
     if client:
         click.secho(
@@ -364,6 +395,9 @@ def mcp_cmd(client: Optional[str] = None, db_path: str = DEFAULT_DB_PATH) -> Non
             color = "green" if ok else "red"
             click.secho(f"  * [{client.upper()}] {msg}", fg=color, err=True)
 
+    if watch:
+        os.environ["AGENT_MEMORY_WATCH"] = "1"
+
     try:
         from tools.mcp_server import main as run_mcp
 
@@ -377,6 +411,87 @@ def mcp_cmd(client: Optional[str] = None, db_path: str = DEFAULT_DB_PATH) -> Non
     except Exception as err:
         click.secho(f"[ERROR] Failed to start MCP server: {err}", fg="red", err=True)
         sys.exit(1)
+
+
+@cli.command("watch")
+@click.option(
+    "--path",
+    "-p",
+    default=".",
+    show_default=True,
+    help="Codebase directory to watch.",
+)
+@click.option(
+    "--db-path",
+    default=None,
+    help="Path to embedded KùzuDB database file (default: <path>/.agent-memory/brain.db).",
+)
+@click.option(
+    "--debounce",
+    "-d",
+    default=1.0,
+    show_default=True,
+    type=float,
+    help="Debounce delay in seconds before reconciling file change batches.",
+)
+@click.option(
+    "--workers",
+    "-w",
+    default=None,
+    type=int,
+    help="Worker threads for AST parsing (default: auto CPU-based).",
+)
+def watch_cmd(
+    path: str,
+    db_path: Optional[str],
+    debounce: float,
+    workers: Optional[int],
+) -> None:
+    """Start background outbox file watcher for real-time incremental graph sync."""
+    target_dir = Path(path).resolve()
+    if not target_dir.exists():
+        click.secho(f"[ERROR] Target directory '{target_dir}' does not exist.", fg="red", err=True)
+        sys.exit(1)
+
+    actual_db = db_path or str(target_dir / ".agent-memory" / "brain.db")
+
+    click.secho("\n[WATCH] Initializing agent-brain outbox file watcher...", fg="cyan", bold=True)
+    click.echo(f"  * Watching directory:  {target_dir}")
+    click.echo(f"  * Database path:       {actual_db}")
+    click.echo(f"  * Debounce delay:      {debounce}s")
+    click.echo(f"  * AST worker threads:  {workers or 'auto'}")
+
+    from sync.watcher import CodebaseWatcher
+    import time
+
+    def on_batch_reconciled(stats: dict) -> None:
+        duration = stats.get("duration_ms", 0)
+        purged = stats.get("purged_files", 0)
+        files = stats.get("files", 0)
+        calls = stats.get("calls_edges", 0)
+        click.secho(
+            f"  [SYNC] Reconciled batch in {duration}ms: {files} updated, {purged} purged, {calls} calls re-wired",
+            fg="green",
+        )
+
+    watcher = CodebaseWatcher(
+        target_dir=target_dir,
+        db_path=actual_db,
+        debounce_seconds=debounce,
+        max_workers=workers,
+        on_reconcile=on_batch_reconciled,
+    )
+
+    try:
+        watcher.start()
+        click.secho("\n[READY] Watching for code changes. Press Ctrl+C to stop.\n", fg="green", bold=True)
+        while True:
+            time.sleep(0.5)
+    except KeyboardInterrupt:
+        click.secho("\n[STOPPING] Shutting down watcher...", fg="yellow")
+    finally:
+        watcher.stop()
+        click.secho("[OK] Watcher stopped cleanly.", fg="green")
 
 
 @cli.command("benchmark")
@@ -424,6 +539,14 @@ def benchmark_cmd(path: str, symbol: str, force_mode: str) -> None:
     help="Aggregate token metrics across all recorded Antigravity sessions.",
 )
 @click.option(
+    "--list",
+    "-l",
+    "list_sessions",
+    is_flag=True,
+    default=False,
+    help="List all recorded Antigravity sessions.",
+)
+@click.option(
     "--json-output",
     "--json",
     is_flag=True,
@@ -440,6 +563,7 @@ def benchmark_cmd(path: str, symbol: str, force_mode: str) -> None:
 def track_cmd(
     session: Optional[str],
     track_all: bool,
+    list_sessions: bool,
     json_output: bool,
     export: Optional[str],
 ) -> None:
@@ -447,6 +571,24 @@ def track_cmd(
     from tools.antigravity_token_tracker import AntigravityTokenTracker
 
     tracker = AntigravityTokenTracker()
+
+    if list_sessions:
+        sessions = tracker.list_sessions()
+        if not sessions:
+            click.secho("[!] No Antigravity sessions found in logs directory.", fg="yellow")
+            return
+        click.secho("\n[SESSIONS] Recorded Antigravity Sessions:\n", fg="cyan", bold=True)
+        click.echo(f"  {'#':<4} {'SESSION ID':<38} {'MODIFIED':<18} {'ENV':<6} {'SIZE':<10}")
+        click.echo("  " + "-" * 78)
+        import datetime
+        for idx, s in enumerate(sessions[:25], 1):
+            mtime_str = datetime.datetime.fromtimestamp(s["mtime"]).strftime("%Y-%m-%d %H:%M")
+            size_kb = f"{s['size_bytes'] / 1024:.1f} KB"
+            marker = " (Latest)" if idx == 1 else ""
+            click.echo(f"  {idx:<4} {s['session_id']:<38} {mtime_str:<18} {s.get('environment', 'App'):<6} {size_kb:<10}{marker}")
+        click.echo("\n💡 Run 'agent-brain track -s <session_id>' to inspect a specific session.\n")
+        return
+
     if track_all:
         report = tracker.analyze_all()
     elif session:

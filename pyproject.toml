@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-brain"
-version = "0.1.0"
+version = "0.2.0"
 description = "Plug-and-pack agent memory tool backed by embedded Kùzu graph database."
 readme = "README.md"
 license = { text = "MIT" }
@@ -35,6 +35,7 @@ dependencies = [
     "tree-sitter-go>=0.22.0",
     "tree-sitter-scala>=0.22.0",
     "tree-sitter-sql>=0.22.0",
+    "watchdog>=3.0.0",
 ]
 
 [project.urls]

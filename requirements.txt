@@ -11,3 +11,4 @@ tree-sitter-rust>=0.22.0
 tree-sitter-go>=0.22.0
 tree-sitter-scala>=0.22.0
 tree-sitter-sql>=0.22.0
+watchdog>=3.0.0

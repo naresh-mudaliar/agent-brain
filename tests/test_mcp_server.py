@@ -6,6 +6,7 @@ import unittest
 from unittest.mock import MagicMock
 
 from tools.mcp_server import (
+    _read_code_slice,
     get_dependency_impact_impl,
     search_code_graph_impl,
     server,
@@ -174,6 +175,18 @@ class TestMCPServer(unittest.TestCase):
         parsed = json.loads(raw_text)
         self.assertFalse(parsed["success"])
         self.assertIn("cannot be empty", parsed["error"])
+
+    def test_read_code_slice(self):
+        """Test on-demand code slicing from disk."""
+        # Test slicing a known file in the workspace
+        snippet = _read_code_slice("AGENTS.md", 1, 3)
+        self.assertIsNotNone(snippet)
+        self.assertIn("AGENTS.md", snippet)
+
+        # Test invalid or missing file returns None without throwing
+        self.assertIsNone(_read_code_slice("nonexistent_file_xyz.py", 1, 10))
+        self.assertIsNone(_read_code_slice(None, 1, 10))
+        self.assertIsNone(_read_code_slice("AGENTS.md", None, 10))
 
 
 if __name__ == "__main__":

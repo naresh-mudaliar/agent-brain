@@ -235,6 +235,12 @@ class TestAntigravityTokenTracker(unittest.TestCase):
             self.assertEqual(res_exp.exit_code, 0)
             self.assertTrue(export_file.exists())
 
+            # Test list sessions option
+            res_list = runner.invoke(cli, ["track", "--list"])
+            self.assertEqual(res_list.exit_code, 0)
+            self.assertIn("[SESSIONS] Recorded Antigravity Sessions:", res_list.output)
+            self.assertIn("cli-session", res_list.output)
+
 
 if __name__ == "__main__":
     unittest.main()

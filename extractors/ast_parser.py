@@ -1282,6 +1282,96 @@ class ASTParser:
         logger.info(f"Graph update complete: {stats}")
         return stats
 
+    def purge_files_from_graph(
+        self, file_paths: List[str], db: Optional[Database] = None
+    ) -> int:
+        """Purge files and their contained classes/functions from the graph.
+
+        Args:
+            file_paths: List of relative or absolute file paths to purge.
+            db: Optional Database instance.
+
+        Returns:
+            Number of purged files.
+        """
+        database = db or get_db()
+        purged = 0
+        for path in file_paths:
+            normalized_path = str(path).replace("\\", "/")
+            try:
+                # 1. Detach delete functions contained in this file
+                database.execute_query(
+                    """
+                    MATCH (f:CodeFile {path: $path})
+                    OPTIONAL MATCH (f)-[:CONTAINS*1..2]->(fn:Function)
+                    DETACH DELETE fn
+                    """,
+                    {"path": normalized_path},
+                )
+                # 2. Detach delete classes contained in this file
+                database.execute_query(
+                    """
+                    MATCH (f:CodeFile {path: $path})
+                    OPTIONAL MATCH (f)-[:CONTAINS*1..2]->(c:Class)
+                    DETACH DELETE c
+                    """,
+                    {"path": normalized_path},
+                )
+                # 3. Delete the CodeFile node itself
+                database.execute_query(
+                    """
+                    MATCH (f:CodeFile {path: $path})
+                    DETACH DELETE f
+                    """,
+                    {"path": normalized_path},
+                )
+                purged += 1
+            except Exception as err:
+                logger.debug(f"Notice while purging file '{normalized_path}': {err}")
+        return purged
+
+    def reconcile_batch_in_graph(
+        self,
+        deleted_paths: List[str],
+        parse_results: List[FileParseResult],
+        db: Optional[Database] = None,
+    ) -> Dict[str, int]:
+        """Atomically reconcile a batch of file changes (purging old AST nodes and inserting new ones).
+
+        Args:
+            deleted_paths: List of file paths to remove completely (e.g. deleted files).
+            parse_results: List of freshly parsed FileParseResults for created/modified files.
+            db: Optional Database instance.
+
+        Returns:
+            Stats dictionary detailing reconciled counts.
+        """
+        database = db or get_db()
+
+        # All affected paths: deleted files + modified files whose old nodes must be purged
+        all_to_purge = list(
+            set(
+                [str(p).replace("\\", "/") for p in deleted_paths]
+                + [r.path for r in parse_results]
+            )
+        )
+        self.purge_files_from_graph(all_to_purge, db=database)
+
+        if not parse_results:
+            return {
+                "purged_files": len(all_to_purge),
+                "files": 0,
+                "classes": 0,
+                "functions": 0,
+                "contains_edges": 0,
+                "calls_edges": 0,
+            }
+
+        # Re-insert the new parse results
+        stats = self.save_to_graph(parse_results, db=database)
+        stats["purged_files"] = len(all_to_purge)
+        return stats
+
     @staticmethod
     def _create_edge(database: Database, query: str, params: Dict[str, Any]) -> bool:
         """Helper to execute an edge query safely."""

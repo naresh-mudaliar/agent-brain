@@ -87,6 +87,9 @@ class SessionTokenStats:
 
     tool_breakdown: Dict[str, int] = field(default_factory=dict)
     token_savings_pct: Optional[float] = None
+    agent_brain_avg_tokens: float = 0.0
+    raw_read_avg_tokens: float = 0.0
+    per_call_savings_pct: Optional[float] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert dataclass to clean dictionary."""
@@ -315,6 +318,26 @@ class AntigravityTokenTracker:
             ) * 100
             stats.token_savings_pct = round(savings, 2)
 
+        stats.agent_brain_avg_tokens = (
+            round(stats.agent_brain_payload_tokens / stats.agent_brain_calls, 1)
+            if stats.agent_brain_calls > 0
+            else 0.0
+        )
+        stats.raw_read_avg_tokens = (
+            round(stats.raw_read_payload_tokens / stats.raw_read_calls, 1)
+            if stats.raw_read_calls > 0
+            else 0.0
+        )
+        if stats.raw_read_avg_tokens > 0 and stats.agent_brain_avg_tokens > 0:
+            stats.per_call_savings_pct = round(
+                (
+                    (stats.raw_read_avg_tokens - stats.agent_brain_avg_tokens)
+                    / stats.raw_read_avg_tokens
+                )
+                * 100,
+                1,
+            )
+
         return stats
 
     def analyze_all(self, max_sessions: Optional[int] = None) -> Dict[str, Any]:
@@ -382,6 +405,29 @@ class AntigravityTokenTracker:
             ) * 100
             aggregated["token_savings_pct"] = round(savings, 2)
 
+        ab_calls = aggregated["agent_brain_calls"]
+        ab_tokens = aggregated["agent_brain_payload_tokens"]
+        raw_calls = aggregated["raw_read_calls"]
+        raw_tokens = aggregated["raw_read_payload_tokens"]
+
+        aggregated["agent_brain_avg_tokens"] = (
+            round(ab_tokens / ab_calls, 1) if ab_calls > 0 else 0.0
+        )
+        aggregated["raw_read_avg_tokens"] = (
+            round(raw_tokens / raw_calls, 1) if raw_calls > 0 else 0.0
+        )
+        if aggregated["raw_read_avg_tokens"] > 0 and aggregated["agent_brain_avg_tokens"] > 0:
+            aggregated["per_call_savings_pct"] = round(
+                (
+                    (aggregated["raw_read_avg_tokens"] - aggregated["agent_brain_avg_tokens"])
+                    / aggregated["raw_read_avg_tokens"]
+                )
+                * 100,
+                1,
+            )
+        else:
+            aggregated["per_call_savings_pct"] = None
+
         return aggregated
 
     def format_report(self, data: Dict[str, Any] | SessionTokenStats) -> str:
@@ -391,20 +437,25 @@ class AntigravityTokenTracker:
 
         is_multi = "sessions_count" in data
         env = data.get("environment", "Unified")
-        title = f"ALL SESSIONS SUMMARY ({', '.join(data.get('environments', ['Antigravity']))})" if is_multi else f"SESSION {data.get('session_id', 'UNKNOWN')} [{env}]"
+        session_id = data.get("session_id", "UNKNOWN")
+
+        if is_multi:
+            header_title = f"ALL SESSIONS SUMMARY ({data.get('sessions_count', 0)} sessions across {', '.join(data.get('environments', ['Antigravity']))})"
+        else:
+            header_title = f"SESSION {session_id} [{env}]"
 
         lines = [
-            "=" * 64,
-            f"  ANTIGRAVITY TOKEN TRACKER - {title}",
-            "=" * 64,
+            "=" * 68,
+            f"  ANTIGRAVITY TOKEN TRACKER - {header_title}",
+            "=" * 68,
         ]
 
         if is_multi:
-            lines.append(f"Sessions Analyzed:           {data.get('sessions_count', 0)}")
-            lines.append(f"Total Agent Planner Steps:   {data.get('total_steps', 0):,}")
+            lines.append(f"Sessions Analyzed:             {data.get('sessions_count', 0):,}")
+            lines.append(f"Total Agent Planner Steps:     {data.get('total_steps', 0):,}")
         else:
-            lines.append(f"Session Environment:         {env}")
-            lines.append(f"Session Steps:               {data.get('steps_count', 0):,}")
+            lines.append(f"Session Environment:           {env}")
+            lines.append(f"Session Steps:                 {data.get('steps_count', 0):,}")
 
         inp_tokens = data.get("input_tokens", 0)
         cache_tokens = data.get("cache_read_tokens", 0)
@@ -413,29 +464,51 @@ class AntigravityTokenTracker:
 
         if tot_model > 0:
             lines.extend([
-                f"Active Model Input Tokens:   {inp_tokens:,}",
-                f"Cached Context Tokens:       {cache_tokens:,}",
-                f"Model Output/Thought Tokens: {out_tokens:,}",
-                f"Total Billable Model Tokens: {tot_model:,}",
-                f"Context Cache Hit Rate:      {data.get('caching_ratio_pct', 0.0)}%",
+                f"Active Model Input Tokens:     {inp_tokens:,}",
+                f"Cached Context Tokens:         {cache_tokens:,}",
+                f"Model Output/Thought Tokens:   {out_tokens:,}",
+                f"Total Billable Model Tokens:   {tot_model:,}",
+                f"Context Cache Hit Rate:        {data.get('caching_ratio_pct', 0.0)}%",
             ])
         else:
-            lines.append("Model Tokens:                (Logged via IDE client background telemetry)")
+            lines.append("Model Tokens:                  (Logged via IDE client background telemetry)")
+
+        ab_calls = data.get("agent_brain_calls", 0)
+        ab_tokens = data.get("agent_brain_payload_tokens", 0)
+        ab_avg = data.get("agent_brain_avg_tokens", round(ab_tokens / ab_calls, 1) if ab_calls > 0 else 0.0)
+
+        raw_calls = data.get("raw_read_calls", 0)
+        raw_tokens = data.get("raw_read_payload_tokens", 0)
+        raw_avg = data.get("raw_read_avg_tokens", round(raw_tokens / raw_calls, 1) if raw_calls > 0 else 0.0)
 
         lines.extend([
-            "-" * 64,
-            "BENCHMARK: AGENT-BRAIN GRAPH VS RAW-FILE RAG",
-            f"• agent-brain Graph Calls:   {data.get('agent_brain_calls', 0):,} calls | {data.get('agent_brain_payload_tokens', 0):,} tokens",
-            f"• Raw File Read Calls:       {data.get('raw_read_calls', 0):,} calls | {data.get('raw_read_payload_tokens', 0):,} tokens",
+            "-" * 68,
+            "TOOL CONTEXT EFFICIENCY: AGENT-BRAIN VS RAW FILE READS",
+            f"• agent-brain Graph Calls:     {ab_calls:,} calls | {ab_tokens:,} tokens  (avg: {ab_avg:.1f} tokens/call)",
+            f"• Raw File Read Calls:         {raw_calls:,} calls | {raw_tokens:,} tokens  (avg: {raw_avg:.1f} tokens/call)",
         ])
 
-        savings = data.get("token_savings_pct")
-        if savings is not None:
-            lines.append(f"🔥 Token Payload Savings:     {savings:.1f}%")
-        else:
-            lines.append("• Token Payload Savings:     N/A (requires both graph & raw calls to compare)")
+        if ab_calls > 0 and raw_calls > 0:
+            per_call_pct = data.get("per_call_savings_pct")
+            if per_call_pct is None and raw_avg > 0:
+                per_call_pct = round(((raw_avg - ab_avg) / raw_avg) * 100, 1)
 
-        lines.extend(["-" * 64, "Top Tools Invocation Breakdown:"])
+            if per_call_pct is not None and per_call_pct > 0:
+                lines.append(f"⚡ Per-Call Payload Reduction:   {per_call_pct:.1f}% smaller payload per graph query")
+                est_saved = max(0, int((raw_avg - ab_avg) * ab_calls))
+                lines.append(f"💡 Estimated Context Saved:     ~{est_saved:,} tokens saved across {ab_calls} graph lookups")
+            elif per_call_pct is not None:
+                lines.append(f"• Per-Call Payload Difference:  {abs(per_call_pct):.1f}%")
+
+            lines.append("   (Note: File reads also handle code edits, configs, and test logs)")
+        elif ab_calls > 0:
+            lines.append(f"• Graph Lookups Active:        {ab_calls} calls (avg: {ab_avg:.1f} tokens/call)")
+        elif raw_calls > 0:
+            lines.append("• Tip: Run 'agent-brain register' to use graph-accelerated symbol lookups.")
+        else:
+            lines.append("• No code exploration calls recorded in this session.")
+
+        lines.extend(["-" * 68, "Top Tools Invocation Breakdown:"])
         breakdown = data.get("tool_breakdown", {})
         if breakdown:
             for tool, cnt in sorted(breakdown.items(), key=lambda x: x[1], reverse=True)[:10]:
@@ -443,7 +516,7 @@ class AntigravityTokenTracker:
         else:
             lines.append("  (No tool calls recorded)")
 
-        lines.append("=" * 64)
+        lines.append("=" * 68)
         return "\n".join(lines)
 
 

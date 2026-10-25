@@ -92,10 +92,21 @@ class Database:
         self,
         db_path: Optional[str] = None,
         graph_name: str = DEFAULT_GRAPH_NAME,
+        buffer_pool_size: Optional[int] = None,
         **kwargs: Any,
     ) -> None:
         self.db_path = db_path or resolve_default_db_path()
         self.graph_name = graph_name
+        env_pool_mb = os.environ.get("AGENT_MEMORY_BUFFER_POOL_MB")
+        if buffer_pool_size is not None:
+            self.buffer_pool_size = buffer_pool_size
+        elif env_pool_mb:
+            try:
+                self.buffer_pool_size = int(env_pool_mb) * 1024 * 1024
+            except ValueError:
+                self.buffer_pool_size = 128 * 1024 * 1024
+        else:
+            self.buffer_pool_size = 128 * 1024 * 1024
         self._db: Optional[kuzu.Database] = None
         self._conn: Optional[kuzu.Connection] = None
         self._lock = threading.Lock()
@@ -121,8 +132,8 @@ class Database:
                 db_dir = Path(self.db_path).parent
                 db_dir.mkdir(parents=True, exist_ok=True)
 
-            logger.info(f"Connecting to embedded Kùzu graph engine at '{self.db_path}'...")
-            self._db = kuzu.Database(self.db_path)
+            logger.info(f"Connecting to embedded Kùzu graph engine at '{self.db_path}' (buffer pool: {self.buffer_pool_size // (1024 * 1024)} MB)...")
+            self._db = kuzu.Database(self.db_path, buffer_pool_size=self.buffer_pool_size)
             self._conn = kuzu.Connection(self._db)
             self._init_schema()
             logger.info(f"Connected to Kùzu graph engine at '{self.db_path}' successfully.")

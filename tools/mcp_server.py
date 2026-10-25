@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 try:
@@ -74,6 +76,40 @@ def _result_to_dicts(result: Any) -> List[Dict[str, Any]]:
     if isinstance(result, list):
         return [_serialize_value(item) for item in result]
     return []
+
+
+def _read_code_slice(
+    file_path: Optional[str],
+    line_start: Optional[int],
+    line_end: Optional[int],
+    max_lines: int = 150,
+) -> Optional[str]:
+    """Read an exact line slice from source code on disk with zero memory retention."""
+    if not file_path or line_start is None:
+        return None
+    try:
+        p = Path(file_path)
+        if not p.is_file():
+            if not p.is_absolute():
+                candidate = Path.cwd() / p
+                if candidate.is_file():
+                    p = candidate
+                else:
+                    return None
+            else:
+                return None
+        with open(p, "r", encoding="utf-8", errors="ignore") as f:
+            lines = f.readlines()
+
+        start_idx = max(0, int(line_start) - 1)
+        end_idx = min(len(lines), int(line_end)) if line_end is not None else min(len(lines), start_idx + max_lines)
+
+        if end_idx - start_idx > max_lines:
+            end_idx = start_idx + max_lines
+
+        return "".join(lines[start_idx:end_idx])
+    except Exception:
+        return None
 
 
 def search_code_graph_impl(
@@ -247,6 +283,11 @@ def search_code_graph_impl(
                     "line_number": rec.get("line_number"),
                     "end_line_number": rec.get("end_line_number"),
                     "docstring": rec.get("docstring"),
+                    "code_snippet": _read_code_slice(
+                        rec.get("path"),
+                        rec.get("line_number"),
+                        rec.get("end_line_number"),
+                    ),
                     "parent": parent_info[0] if parent_info else None,
                     "immediate_callers": callers,
                     "immediate_callees": callees,
@@ -310,6 +351,8 @@ def get_dependency_impact_impl(
            target.name AS name,
            target.qualified_name AS qualified_name,
            target.path AS path,
+           target.line_number AS line_number,
+           target.end_line_number AS end_line_number,
            'Function' AS label
     UNION
     MATCH (target:Class)
@@ -318,6 +361,8 @@ def get_dependency_impact_impl(
            target.name AS name,
            target.qualified_name AS qualified_name,
            target.path AS path,
+           target.line_number AS line_number,
+           target.end_line_number AS end_line_number,
            'Class' AS label
     """
     try:
@@ -334,6 +379,11 @@ def get_dependency_impact_impl(
             }
 
         target_info = target_records[0]
+        target_info["code_snippet"] = _read_code_slice(
+            target_info.get("path"),
+            target_info.get("line_number"),
+            target_info.get("end_line_number"),
+        )
 
         # 2. Multi-hop traversal: find all functions that reach the target via CALLS chain
         try:
@@ -350,6 +400,7 @@ def get_dependency_impact_impl(
                affected.qualified_name AS qualified_name,
                affected.path AS file_path,
                affected.line_number AS line_number,
+               affected.end_line_number AS end_line_number,
                length(path) AS hop_distance
         ORDER BY hop_distance ASC, affected.qualified_name ASC
         """
@@ -364,6 +415,13 @@ def get_dependency_impact_impl(
                 continue
             hop = rec.get("hop_distance", 1)
             if fid not in impacted_map or hop < impacted_map[fid]["hop_distance"]:
+                if hop == 1:
+                    rec["code_snippet"] = _read_code_slice(
+                        rec.get("file_path"),
+                        rec.get("line_number"),
+                        rec.get("end_line_number"),
+                        max_lines=60,
+                    )
                 impacted_map[fid] = rec
 
         impacted_list = sorted(
@@ -413,14 +471,14 @@ def get_dependency_impact_impl(
 # Register MCP tools with the server
 @server.tool()
 def search_code_graph(symbol_name: str) -> str:
-    """Runs an openCypher query on KùzuDB to return a function/class node,
-    its file path, and its immediate callers/callees.
+    """Runs an openCypher query on FalkorDB/KùzuDB to return a function/class node,
+    its file path, line numbers, caller/callee relationships, and its exact code snippet.
 
     Args:
         symbol_name: The name or qualified name of the class or function to find.
 
     Returns:
-        JSON string containing matching nodes, file locations, callers, and callees.
+        JSON string containing matching nodes, file locations, callers, callees, and code snippets.
     """
     result = search_code_graph_impl(symbol_name)
     return json.dumps(result, indent=2)
@@ -429,13 +487,13 @@ def search_code_graph(symbol_name: str) -> str:
 @server.tool()
 def get_dependency_impact(function_name: str) -> str:
     """Performs a multi-hop traversal to find all downstream functions affected
-    by changing that function.
+    by changing that function, including target and immediate caller code snippets.
 
     Args:
         function_name: The name or qualified name of the function being changed.
 
     Returns:
-        JSON string detailing affected functions, depth/hop distance, and affected files.
+        JSON string detailing affected functions, depth/hop distance, affected files, and target code snippet.
     """
     result = get_dependency_impact_impl(function_name)
     return json.dumps(result, indent=2)
@@ -443,8 +501,30 @@ def get_dependency_impact(function_name: str) -> str:
 
 def main() -> None:
     """Run the MCP server over stdio transport."""
+    watcher = None
+    should_watch = (
+        "--watch" in sys.argv
+        or os.environ.get("AGENT_MEMORY_WATCH", "").lower() in ("1", "true", "yes")
+    )
+    if should_watch:
+        try:
+            from sync.watcher import CodebaseWatcher
+            watch_dir = os.environ.get("AGENT_MEMORY_WATCH_DIR", ".")
+            logger.info(f"Starting background CodebaseWatcher on '{watch_dir}'...")
+            watcher = CodebaseWatcher(target_dir=watch_dir)
+            watcher.start()
+        except Exception as e:
+            logger.warning(f"Could not initialize background CodebaseWatcher: {e}")
+
     logger.info("Starting agent-brain MCP server on stdio transport...")
-    server.run(transport="stdio")
+    try:
+        server.run(transport="stdio")
+    finally:
+        if watcher:
+            try:
+                watcher.stop()
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":

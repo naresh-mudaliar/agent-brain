@@ -11,6 +11,12 @@ from .s3_sync import (
     import_memory_archive,
     upload_to_s3,
 )
+from .watcher import (
+    CodebaseEventHandler,
+    CodebaseWatcher,
+    OutboxQueue,
+    OutboxWorker,
+)
 
 __all__ = [
     "export_memory_archive",
@@ -22,4 +28,8 @@ __all__ = [
     "SyncError",
     "EncryptionError",
     "DecryptionError",
+    "CodebaseWatcher",
+    "OutboxQueue",
+    "OutboxWorker",
+    "CodebaseEventHandler",
 ]
